@@ -20,7 +20,7 @@ async def main(page: ft.Page):
         
     ## Variables
     playlist = config["songs_directory"]
-    current_index = 0
+    current_index = -1
     total_duration = 0
     is_playing = False
 
@@ -99,6 +99,22 @@ async def main(page: ft.Page):
             print(f"Error extracting song info: {e}")
             return None
 
+    def state_change_handler(event):
+        nonlocal is_playing
+        if event.state == fta.AudioState.PLAYING:
+            is_playing = True
+            buttons_container.controls[1].icon = ft.Icons.PAUSE
+        elif event.state == fta.AudioState.PAUSED:
+            is_playing = False
+            buttons_container.controls[1].icon = ft.Icons.PLAY_ARROW
+        elif event.state == fta.AudioState.STOPPED:
+            is_playing = False
+            buttons_container.controls[1].icon = ft.Icons.PLAY_ARROW
+        elif event.state == fta.AudioState.COMPLETED:
+            page.run_task(button_next_song)
+        page.update()
+
+    MAX_AUDIO_GAIN = 0.5
     async def change_song(index):
         nonlocal current_index, is_playing, current_song
 
@@ -109,10 +125,11 @@ async def main(page: ft.Page):
             if current_song is None:
                 current_song = fta.Audio(
                     src=song_data['route'],
-                    volume=config.get("volume", 0.35),
+                    volume=config.get("volume", 0.35) * MAX_AUDIO_GAIN,
                     autoplay=True,
                     on_position_change=lambda e: update_timebar(e.position),
                     on_duration_change=lambda e: load_duration(e.duration),
+                    on_state_change=lambda e: state_change_handler(e)
                 )
                 page.services.append(current_song)
             else:
@@ -126,41 +143,49 @@ async def main(page: ft.Page):
             total_time_text.value = "0:00"
 
             is_playing = True
-            buttons_container.controls[1].icon = ft.Icons.PAUSE
             page.update()
-            
-            if current_song:
-                await current_song.play()
 
     ## Methods for controlling the audio and UI
     async def button_play(e):
         nonlocal is_playing 
 
         if current_song is None:
+            if playlist:
+                await change_song(0)
             return 
         
         if is_playing:
             await current_song.pause()
             is_playing = False
-            e.control.icon = ft.Icons.PLAY_ARROW
         else:
             if timebar.value > 0:
                 await current_song.resume()
             else:
                 await current_song.play() 
-                
             is_playing = True
-            e.control.icon = ft.Icons.PAUSE
         page.update()
 
-    async def button_next_song(e):
-        print("Next song button clicked")
+    async def button_next_song():
+        nonlocal current_index
+        if playlist:
+            next_index = (current_index + 1) % len(playlist)
+            await change_song(next_index)
 
-    async def button_previous_song(e):
-        print("Previous song button clicked")
+    async def button_previous_song():
+        nonlocal current_index
+        if playlist:
+            previous_index = (current_index - 1) % len(playlist)
+            await change_song(previous_index)
 
     def set_volume(value: float):
-        current_song.volume = value
+        if current_song is None:
+            return
+
+        current_song.volume = value * MAX_AUDIO_GAIN
+
+        percentage = int(value * 100)
+        volume_text.value = f"{percentage}%"
+        page.update()
         # prob it would be better to save only when the app is closed, but for now its fine
         config["volume"] = value
         save_config(config)
@@ -217,19 +242,21 @@ async def main(page: ft.Page):
     buttons_container = ft.Row(
         alignment=ft.MainAxisAlignment.CENTER,
         controls=[
-            ft.IconButton(ft.Icons.SKIP_PREVIOUS, hover_color="transparent"),
+            ft.IconButton(ft.Icons.SKIP_PREVIOUS, on_click=button_previous_song, hover_color="transparent"),
             ft.IconButton(ft.Icons.PLAY_ARROW, on_click=button_play, hover_color="transparent"),
-            ft.IconButton(ft.Icons.SKIP_NEXT, hover_color="transparent"),
+            ft.IconButton(ft.Icons.SKIP_NEXT, on_click=button_next_song, hover_color="transparent"),
             ft.IconButton(ft.Icons.SHUFFLE,hover_color="transparent",on_click= select_random_song)
         ],
     )
 
+    volume_text = ft.Text(f"{int(config.get('volume', 0.35) * 100)}%", size=12, color="gray")
     volume_slider = ft.Row(
         alignment=ft.MainAxisAlignment.CENTER,
         spacing=5,
         controls=[
             ft.Icon(ft.Icons.VOLUME_DOWN, color="gray"),
-            ft.Slider(min=0.0, max=1.0, value=config.get("volume", 0.35), active_color="blue", overlay_color="transparent", label="{value}%", on_change=lambda e: set_volume(e.control.value)),
+            ft.Slider(min=0.0, max=1.0, value=config.get("volume", 0.35), active_color="blue", thumb_color="transparent", overlay_color="transparent", on_change=lambda e: set_volume(e.control.value)),
+            volume_text
         ]
     )
     
