@@ -5,7 +5,6 @@ import os
 import random
 from config_manager import load_config, save_config
 
-# Cargar la configuración al inicio
 config = load_config()
 
 async def main(page: ft.Page):
@@ -25,19 +24,12 @@ async def main(page: ft.Page):
     total_duration = 0
     is_playing = False
 
-    ## UI Elements
-    song_title_text = ft.Text("Elige una canción", size=20, weight=ft.FontWeight.BOLD)
-    author_text = ft.Text("Artista Desconocido", size=16, color="gray")
-    
-    current_time_text = ft.Text("0:00", size=12, color="gray")
-    total_time_text = ft.Text("0:00", size=12, color="gray")
+    current_song = None
 
     def load_duration(duration):
         nonlocal total_duration
         total_duration = (duration.minutes * 60) + duration.seconds
         total_time_text.value = f"{duration.minutes}:{duration.seconds:02d}"
-
-    current_song = None
 
     ## Auxiliar methods
     async def get_song_directory():
@@ -67,7 +59,7 @@ async def main(page: ft.Page):
                                 leading=ft.Icon(ft.Icons.MUSIC_NOTE),
                                 title=ft.Text(song_data['title'], weight=ft.FontWeight.BOLD, size=14),
                                 subtitle=ft.Text(song_data['artist'], size=12, color="gray"),
-                                on_click=lambda e, index=len(playlist)-1: select_song(index)
+                                on_click=lambda e, index=len(playlist)-1: page.run_task(change_song, index)
                             )
                         )
 
@@ -78,18 +70,6 @@ async def main(page: ft.Page):
         except Exception as e:
             print(f"Error loading songs: {e}")
         page.update()
-
-    def select_song(index):
-        nonlocal is_playing
-        change_song(index)
-        try:
-            if not is_playing:
-                current_song.play()
-                is_playing = True
-                page.update()
-        except Exception as e:
-            print(f"Error playing song: {e}")
-
 
     def extract_song_info(file_path):
         try:
@@ -119,7 +99,7 @@ async def main(page: ft.Page):
             print(f"Error extracting song info: {e}")
             return None
 
-    def change_song(index):
+    async def change_song(index):
         nonlocal current_index, is_playing, current_song
 
         if 0 <= index < len(playlist):
@@ -130,7 +110,7 @@ async def main(page: ft.Page):
                 current_song = fta.Audio(
                     src=song_data['route'],
                     volume=config.get("volume", 0.35),
-                    autoplay=False,
+                    autoplay=True,
                     on_position_change=lambda e: update_timebar(e.position),
                     on_duration_change=lambda e: load_duration(e.duration),
                 )
@@ -144,14 +124,20 @@ async def main(page: ft.Page):
             timebar.value = 0
             current_time_text.value = "0:00"
             total_time_text.value = "0:00"
+
+            is_playing = True
+            buttons_container.controls[1].icon = ft.Icons.PAUSE
             page.update()
             
-            if is_playing and current_song:
-                current_song.play()
+            if current_song:
+                await current_song.play()
 
     ## Methods for controlling the audio and UI
     async def button_play(e):
         nonlocal is_playing 
+
+        if current_song is None:
+            return 
         
         if is_playing:
             await current_song.pause()
@@ -179,9 +165,9 @@ async def main(page: ft.Page):
         config["volume"] = value
         save_config(config)
 
-    def select_random_song():
+    async def select_random_song():
         if playlist:
-            change_song(random.randint(0, len(playlist) - 1))
+            await change_song(random.randint(0, len(playlist) - 1))
 
     def update_timebar(position):
         position_seconds = position / 1000
@@ -203,6 +189,19 @@ async def main(page: ft.Page):
     page.services.append(current_song)
     page.update()
 
+    ## UI Elements
+    ### Left Side
+    song_title_text = ft.Text("Elige una canción", size=20, weight=ft.FontWeight.BOLD)
+    author_text = ft.Text("-", size=16, color="gray")
+    
+    current_time_text = ft.Text("0:00", size=12, color="gray")
+    total_time_text = ft.Text("0:00", size=12, color="gray")
+
+    current_time = ft.Row(
+        alignment=ft.MainAxisAlignment.CENTER,
+        controls=[current_time_text, ft.Text("/", size=16, color="gray"), total_time_text]
+    )
+
     timebar = ft.Slider(
         min=0.0, 
         max=1.0, 
@@ -215,17 +214,37 @@ async def main(page: ft.Page):
         on_change=update_slider
    )
     
+    buttons_container = ft.Row(
+        alignment=ft.MainAxisAlignment.CENTER,
+        controls=[
+            ft.IconButton(ft.Icons.SKIP_PREVIOUS, hover_color="transparent"),
+            ft.IconButton(ft.Icons.PLAY_ARROW, on_click=button_play, hover_color="transparent"),
+            ft.IconButton(ft.Icons.SKIP_NEXT, hover_color="transparent"),
+            ft.IconButton(ft.Icons.SHUFFLE,hover_color="transparent",on_click= select_random_song)
+        ],
+    )
+
+    volume_slider = ft.Row(
+        alignment=ft.MainAxisAlignment.CENTER,
+        spacing=5,
+        controls=[
+            ft.Icon(ft.Icons.VOLUME_DOWN, color="gray"),
+            ft.Slider(min=0.0, max=1.0, value=config.get("volume", 0.35), active_color="blue", overlay_color="transparent", label="{value}%", on_change=lambda e: set_volume(e.control.value)),
+        ]
+    )
+    
+    ### Right Side
+    select_folder_btn = ft.Button(
+        content="Carpeta de música",
+        icon=ft.Icons.FOLDER_OPEN,
+        on_click=get_song_directory,
+    )
+
     playlist_view = ft.ListView(
         spacing=10,
         padding=20,
         expand=True,
         build_controls_on_demand=True
-    )
-
-    random_song_btn = ft.IconButton(
-        icon=ft.Icons.SHUFFLE,
-        hover_color="transparent",
-        on_click= select_random_song
     )
 
     page.add(
@@ -260,32 +279,11 @@ async def main(page: ft.Page):
                                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                     spacing=20,
                                     controls=[
-                                        # Actual time
-                                        ft.Row(
-                                            alignment=ft.MainAxisAlignment.CENTER,
-                                            controls=[current_time_text, ft.Text("/", size=16, color="gray"), total_time_text]
-                                        ),
-                                        # Progress bar
+                                        current_time,
                                         timebar,
-                                        # Buttons
-                                        ft.Row(
-                                            alignment=ft.MainAxisAlignment.CENTER,
-                                            controls=[
-                                                ft.IconButton(ft.Icons.SKIP_PREVIOUS, hover_color="transparent"),
-                                                ft.IconButton(ft.Icons.PLAY_ARROW, on_click=button_play, hover_color="transparent"),
-                                                ft.IconButton(ft.Icons.SKIP_NEXT, hover_color="transparent"),
-                                                random_song_btn,
-                                            ],
-                                        ),
-                                        # Volume Slider
-                                        ft.Row(
-                                            alignment=ft.MainAxisAlignment.CENTER,
-                                            spacing=5,
-                                            controls=[
-                                                ft.Icon(ft.Icons.VOLUME_DOWN, color="gray"),
-                                                ft.Slider(min=0.0, max=1.0, value=config.get("volume", 0.35), active_color="blue", overlay_color="transparent", label="{value}%", on_change=lambda e: set_volume(e.control.value)),
-                                            ]
-                                        )
+                                        buttons_container,
+                                        volume_slider
+
                                     ]
                                 ) 
                             ]
@@ -308,11 +306,7 @@ async def main(page: ft.Page):
                                             controls=[
                                                 ft.Row(
                                                     controls=[
-                                                        ft.Button(
-                                                            content="Carpeta de música",
-                                                            icon=ft.Icons.FOLDER_OPEN,
-                                                            on_click=get_song_directory,
-                                                        ),
+                                                        select_folder_btn
                                                     ]
                                                 )
                                             ]
