@@ -218,6 +218,9 @@ async def main(page: ft.Page):
         page.update()
 
     async def update_slider(e):
+        if current_song is None or total_duration == 0:
+            return
+
         new_position = e.control.value * total_duration
         await current_song.seek(int(new_position * 1000))
 
