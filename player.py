@@ -3,14 +3,19 @@ import flet_audio as fta
 from tinytag import TinyTag
 import os
 import random
+from config_manager import load_config, save_config
+
+# Cargar la configuración al inicio
+config = load_config()
 
 async def main(page: ft.Page):
     ## UI Config
     page.title = "Music Player"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.theme_mode = ft.ThemeMode.DARK
 
     ## Variables
-    playlist = []
+    playlist = config["songs_directory"]
     current_index = 0
     total_duration = 0
     is_playing = False
@@ -18,52 +23,127 @@ async def main(page: ft.Page):
     ## UI Elements
     song_title_text = ft.Text("Elige una canción", size=20, weight=ft.FontWeight.BOLD)
     author_text = ft.Text("Artista Desconocido", size=16, color="gray")
-    #song_cover = ft.Image(width=250, height=250, fit=ft.ImageFit.COVER, border_radius=15)
     
     current_time_text = ft.Text("0:00", size=12, color="gray")
     total_time_text = ft.Text("0:00", size=12, color="gray")
-
 
     def load_duration(duration):
         nonlocal total_duration
         total_duration = (duration.minutes * 60) + duration.seconds
         total_time_text.value = f"{duration.minutes}:{duration.seconds:02d}"
 
-    current_song = fta.Audio(
-        src="BYE.mp3", 
-        volume=0.5, 
-        autoplay=False,
-        on_position_change=lambda e: update_timebar(e.position),
-        on_duration_change=lambda e: load_duration(e.duration),
-        on_state_change=lambda e: print("State changed:", e.state),
-    )
+    current_song = None
 
     ## Auxiliar methods
-    async def select_directory(e):
-        nonlocal playlist, current_index
-        if e.path:
-            playlist = []
+    async def get_song_directory():
+        path = await ft.FilePicker().get_directory_path()
+        if path:
+            directory_path.value = path
+            await load_songs(path)
 
-            try:
-                for file_name in os.listdir(e.path):
-                    if file_name.lower().endswith(('.mp3', '.wav', '.ogg')):
-                        route = os.path.join(e.path, file_name)
-                        song_data = extract_song_info(route)
-                        if song_data:
-                            playlist.append(song_data)
-            except Exception as e:
-                print(f"Error reading directory: {e}")
+    async def load_songs(songs_directory: str):
+        nonlocal playlist, current_index
+        if not songs_directory or songs_directory == "Sin carpeta seleccionada":
+            return
+        
+        # Clears the playlist and ui
+        playlist = []
+        playlist_view.controls.clear()
+
+        try:
+            for file_name in os.listdir(songs_directory):
+                if file_name.lower().endswith(('.mp3', '.wav', '.ogg')):
+                    route = os.path.join(songs_directory, file_name)
+                    song_data = extract_song_info(route)
+                    if song_data:
+                        playlist.append(song_data)
+                        playlist_view.controls.append(
+                            ft.ListTile(
+                                leading=ft.Icon(ft.Icons.MUSIC_NOTE),
+                                title=ft.Text(song_data['title'], weight=ft.FontWeight.BOLD, size=14),
+                                subtitle=ft.Text(song_data['artist'], size=12, color="gray"),
+                                on_click=lambda e, index=len(playlist)-1: select_song(index)
+                            )
+                        )
+
+            config["songs_directory"] = songs_directory
+            save_config(config)
+            
+            playlist_view.update()
+        except Exception as e:
+            print(f"Error loading songs: {e}")
+        page.update()
+
+    def select_song(index):
+        nonlocal is_playing
+        change_song(index)
+        try:
+            if not is_playing:
+                current_song.play()
+                is_playing = True
+                page.update()
+        except Exception as e:
+            print(f"Error playing song: {e}")
+
 
     def extract_song_info(file_path):
         try:
             tag = TinyTag.get(file_path)
-            song_title_text.value = tag.title if tag.title else "Unknown Title"
-            author_text.value = tag.artist if tag.artist else "Unknown Artist"
-            #song_cover.src = tag.album_art if tag.album_art else "default_cover.jpg"
+            # If the metadata is correctly filled (the perfect case)
+            if tag.title and tag.artist:
+                return {
+                    "title": tag.title.strip(),
+                    "artist": tag.artist.strip(),
+                    "route": file_path
+                }
+            
+            # Aaaand if not, we need to try to set the correct title and artist from the file name 
+            song_title = os.path.basename(file_path).replace(".mp3", "").replace(".wav", "").replace(".ogg", "")
+            song_artist = tag.artist.strip() if tag.artist else "Artista Desconocido"
+
+            # Hoping to match all the unnecessary terms
+            for trash in ["(Official Video)", "[Official Video]", "[Official Audio]", "(Official Audio)", "Lyrics", "[Video Oficial]", "(Video Oficial)", "4K", "HD", "[4K]", "[HD]", "(4K)", "(HD)", "Audio", "(Audio)", "[Audio]", "Official", "(Official)", "[Official]", "Video", "(Video)", "[Video]", "Lyric Video", "(Lyric Video)", "[Lyric Video]", "Lyric", "(Lyric)", "[Lyric]", "()" "( )", "[]", "[]"]:
+                song_title = song_title.replace(trash, "").replace(trash.lower(), "")
+
+            return {
+                "title": song_title.strip(),
+                "artist": song_artist.strip(),
+                "route": file_path
+            }
         except Exception as e:
             print(f"Error extracting song info: {e}")
-        page.update()
-    
+            return None
+
+    def change_song(index):
+        nonlocal current_index, is_playing, current_song
+
+        if 0 <= index < len(playlist):
+            current_index = index
+            song_data = playlist[current_index]
+            
+            if current_song is None:
+                current_song = fta.Audio(
+                    src=song_data['route'],
+                    volume=config.get("volume", 0.35),
+                    autoplay=False,
+                    on_position_change=lambda e: update_timebar(e.position),
+                    on_duration_change=lambda e: load_duration(e.duration),
+                )
+                page.services.append(current_song)
+            else:
+                current_song.src = song_data['route']
+            
+            song_title_text.value = song_data['title']
+            author_text.value = song_data['artist']
+
+            timebar.value = 0
+            current_time_text.value = "0:00"
+            total_time_text.value = "0:00"
+            page.update()
+            
+            if is_playing and current_song:
+                current_song.play()
+
     ## Methods for controlling the audio and UI
     async def button_play(e):
         nonlocal is_playing 
@@ -90,27 +170,13 @@ async def main(page: ft.Page):
 
     def set_volume(value: float):
         current_song.volume = value
+        # prob it would be better to save only when the app is closed, but for now its fine
+        config["volume"] = value
+        save_config(config)
 
     def select_random_song():
         if playlist:
-            change_song(random.choice(playlist))
-        
-    def change_song(index):
-        nonlocal current_index, is_playing
-        if 0 <= index < len(playlist):
-            current_index = index
-            song_data = playlist[current_index]
-            current_song.src = song_data['route']
-            song_title_text.value = song_data['title']
-            author_text.value = song_data['artist']
-            #song_cover.src = song_data['cover'] if 'cover' in song_data else "default_cover.jpg"
-            timebar.value = 0
-            current_time_text.value = "0:00"
-            total_time_text.value = "0:00"
-            page.update()
-            
-            if is_playing:
-                current_song.play()
+            change_song(random.randint(0, len(playlist) - 1))
 
     def update_timebar(position):
         position_seconds = position / 1000
@@ -148,24 +214,15 @@ async def main(page: ft.Page):
         spacing=10,
         padding=20,
         expand=True,
-        controls=[
-            ft.Text(f"Cancion {i}", color=ft.Colors.ON_SECONDARY) for i in range(0, 60)
-        ])
-    #ft.ListView(expand=True, spacing=10)
-
-    add_songs_btn = ft.Button(
-        "Agregar Canciones",
-        icon=ft.Icons.ADD_LINK,
-        # on_click= ... (apuntará a tu lógica de seleccionar archivos)
+        build_controls_on_demand=True
     )
 
     random_song_btn = ft.IconButton(
         icon=ft.Icons.SHUFFLE,
         hover_color="transparent",
-        on_click=lambda e: select_random_song()
+        on_click= select_random_song
     )
 
-    page.expand = True
     page.add(
         ft.Container(
             padding=20,
@@ -212,7 +269,7 @@ async def main(page: ft.Page):
                                                 ft.IconButton(ft.Icons.SKIP_PREVIOUS, hover_color="transparent"),
                                                 ft.IconButton(ft.Icons.PLAY_ARROW, on_click=button_play, hover_color="transparent"),
                                                 ft.IconButton(ft.Icons.SKIP_NEXT, hover_color="transparent"),
-                                                random_song_btn, # Tu nuevo botón shuffle
+                                                random_song_btn,
                                             ],
                                         ),
                                         # Volume Slider
@@ -221,7 +278,7 @@ async def main(page: ft.Page):
                                             spacing=5,
                                             controls=[
                                                 ft.Icon(ft.Icons.VOLUME_DOWN, color="gray"),
-                                                ft.Slider(min=0.0, max=1.0, value=0.5, active_color="blue", overlay_color="transparent", label="{value}%", on_change=lambda e: set_volume(e.control.value)),
+                                                ft.Slider(min=0.0, max=1.0, value=config.get("volume", 0.35), active_color="blue", overlay_color="transparent", label="{value}%", on_change=lambda e: set_volume(e.control.value)),
                                             ]
                                         )
                                     ]
@@ -241,11 +298,25 @@ async def main(page: ft.Page):
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     controls=[
                                         ft.Text("Lista de Reproducción", size=18, weight=ft.FontWeight.BOLD),
-                                        add_songs_btn,
+                                        ft.Row(
+                                            alignment=ft.MainAxisAlignment.END,
+                                            controls=[
+                                                ft.Row(
+                                                    controls=[
+                                                        ft.Button(
+                                                            content="Elegir carpeta de canciones",
+                                                            icon=ft.Icons.FOLDER_OPEN,
+                                                            on_click=get_song_directory,
+                                                        ),
+                                                    ]
+                                                )
+                                            ]
+                                        )
                                     ]
                                 ),
                                 ft.Divider(),
-                                playlist_view,
+                                directory_path := ft.Text(config.get("songs_directory", "Sin carpeta seleccionada"), size=12, color="gray", overflow=ft.TextOverflow.ELLIPSIS),
+                                playlist_view
                             ]
                         )
                     )
@@ -253,6 +324,12 @@ async def main(page: ft.Page):
             )
         )
     )
+
+    if config.get("songs_directory"): 
+        directory_path.value = config["songs_directory"]
+        await load_songs(config["songs_directory"])
+        
+    page.update()
 
 ft.run(main)
 
