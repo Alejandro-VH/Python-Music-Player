@@ -5,6 +5,8 @@ CONFIG_FILE = "config.json"
 
 DEFAULT_CONFIG = {
     "volume": 0.35,
+    "max_gain": 0.7,
+    "color": "blue",
     "songs_directory": "Sin carpeta seleccionada"
 }
 

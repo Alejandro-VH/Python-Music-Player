@@ -23,7 +23,7 @@ async def main(page: ft.Page):
     current_index = -1
     total_duration = 0
     is_playing = False
-    MAX_AUDIO_GAIN = 0.5
+    MAX_AUDIO_GAIN = config.get("max_gain", 0.7)
     current_song = None
 
     def load_duration(duration):
@@ -39,13 +39,12 @@ async def main(page: ft.Page):
             await load_songs(path)
 
     async def load_songs(songs_directory: str):
-        nonlocal playlist, current_index
+        nonlocal playlist
         if not songs_directory or songs_directory == "Sin carpeta seleccionada":
             return
         
         # Clears the playlist and ui
         playlist = []
-        playlist_view.controls.clear()
 
         try:
             for file_name in os.listdir(songs_directory):
@@ -54,22 +53,29 @@ async def main(page: ft.Page):
                     song_data = extract_song_info(route)
                     if song_data:
                         playlist.append(song_data)
-                        playlist_view.controls.append(
-                            ft.ListTile(
-                                leading=ft.Icon(ft.Icons.MUSIC_NOTE),
-                                title=ft.Text(song_data['title'], weight=ft.FontWeight.BOLD, size=14),
-                                subtitle=ft.Text(song_data['artist'], size=12, color="gray"),
-                                on_click=lambda e, index=len(playlist)-1: page.run_task(change_song, index)
-                            )
-                        )
 
             config["songs_directory"] = songs_directory
             save_config(config)
-            
-            playlist_view.update()
+
+            update_playlist_ui()
         except Exception as e:
             print(f"Error loading songs: {e}")
         page.update()
+
+    def update_playlist_ui():
+        playlist_view.controls.clear()
+
+        selected_color = config.get("color", "blue")
+        for index, song_data in enumerate(playlist):
+            playlist_view.controls.append(
+                ft.ListTile(
+                    leading=ft.Icon(ft.Icons.MUSIC_NOTE, color=selected_color),
+                    title=ft.Text(song_data['title'], weight=ft.FontWeight.BOLD, size=14),
+                    subtitle=ft.Text(song_data['artist'], size=12, color="gray"),
+                    on_click=lambda e, idx=index: page.run_task(change_song, idx)
+                )
+            )
+        playlist_view.update()
 
     def extract_song_info(file_path):
         try:
@@ -86,7 +92,7 @@ async def main(page: ft.Page):
             song_title = os.path.basename(file_path).replace(".mp3", "").replace(".wav", "").replace(".ogg", "")
             song_artist = tag.artist.strip() if tag.artist else "Artista Desconocido"
 
-            # Hoping to match all the unnecessary terms
+            # Hoping to match all the unnecessary terms for a cleaner view
             for trash in ["(Official Video)", "[Official Video]", "[Official Audio]", "(Official Audio)", "Lyrics", "[Video Oficial]", "(Video Oficial)", "4K", "HD", "[4K]", "[HD]", "(4K)", "(HD)", "Audio", "(Audio)", "[Audio]", "Official", "(Official)", "[Official]", "Video", "(Video)", "[Video]", "Lyric Video", "(Lyric Video)", "[Lyric Video]", "Lyric", "(Lyric)", "[Lyric]", "()" "( )", "[]", "[]"]:
                 song_title = song_title.replace(trash, "").replace(trash.lower(), "")
 
@@ -177,19 +183,26 @@ async def main(page: ft.Page):
             await change_song(previous_index)
 
     def set_volume(value: float):
+        MAX_AUDIO_GAIN = config.get("max_gain", 0.7)
         if current_song is not None:
             current_song.volume = value * MAX_AUDIO_GAIN
 
         percentage = int(value * 100)
         volume_text.value = f"{percentage}%"
-        page.update()
+        
         # prob it would be better to save only when the app is closed, but for now its fine
         config["volume"] = value
         save_config(config)
+        page.update()
 
     async def select_random_song():
         if playlist:
             await change_song(random.randint(0, len(playlist) - 1))
+            
+    def update_gain(value: float):
+            config.update({"max_gain": value})
+            gain_dialog_text.value = f"{int(value * 100)}%"
+            page.update()
 
     def update_timebar(position):
         position_seconds = position / 1000
@@ -208,8 +221,21 @@ async def main(page: ft.Page):
         new_position = e.control.value * total_duration
         await current_song.seek(int(new_position * 1000))
 
+    def close_settings():
+        save_config(config)
+        # UI stuff
+        new_color = config.get("color", "blue")
+        timebar.active_color = new_color
+        volume_slider.controls[1].active_color = new_color
+        update_playlist_ui()
+
+        # Update volume
+        set_volume(volume_slider.controls[1].value)
+
+        page.pop_dialog()
+        page.update()
+
     page.services.append(current_song)
-    page.update()
 
     ## UI Elements
     ### Left Side
@@ -228,7 +254,7 @@ async def main(page: ft.Page):
         min=0.0, 
         max=1.0, 
         value=0.0, 
-        active_color="blue", 
+        active_color=config.get("color", "blue"),
         thumb_color="transparent",
         overlay_color="transparent",
         secondary_track_value=0.0,
@@ -252,16 +278,60 @@ async def main(page: ft.Page):
         spacing=5,
         controls=[
             ft.Icon(ft.Icons.VOLUME_DOWN, color="gray"),
-            ft.Slider(min=0.0, max=1.0, value=config.get("volume", 0.35), active_color="blue", thumb_color="transparent", overlay_color="transparent", on_change=lambda e: set_volume(e.control.value)),
+            ft.Slider(min=0.0, max=1.0, value=config.get("volume", 0.35), active_color=config.get("color", "blue"), thumb_color="transparent", overlay_color="transparent", on_change=lambda e: set_volume(e.control.value)),
             volume_text
         ]
     )
     
     ### Right Side
-    select_folder_btn = ft.Button(
-        content="Carpeta de música",
+    select_folder_btn = ft.IconButton(
+        tooltip="Carpeta de música",
         icon=ft.Icons.FOLDER_OPEN,
         on_click=get_song_directory,
+    )
+
+    config_btn = ft.IconButton(
+        tooltip="Configuración",
+        icon=ft.Icons.SETTINGS,
+        hover_color="transparent",
+        on_click=lambda e: page.show_dialog(config_dialog),
+    )
+
+    gain_dialog_text = ft.Text(f"{int(config.get('max_gain', 0.7) * 100)}%", size=12, weight=ft.FontWeight.BOLD, color="blue")
+    config_dialog = ft.AlertDialog(
+        title=ft.Text("Ajustes", size=16, weight=ft.FontWeight.BOLD),
+        content=ft.Column(
+            tight=True,
+            width=220,
+            controls=[
+                ft.Text("Ganancia de Audio:"),
+                gain_dialog_text,
+                ft.Slider(
+                    min=0.1, 
+                    max=1.0, 
+                    value=config.get("max_gain", 0.5),
+                    on_change=lambda e: update_gain(float(e.control.value)),
+                ),
+                
+                ft.Text("Color del Interfaz:", size=12, color="gray"),
+                ft.Dropdown(
+                    height=45,
+                    value=config.get("color", "blue"),
+                    options=[
+                        ft.dropdown.Option("blue", "Azul"),
+                        ft.dropdown.Option("red", "Rojo"),
+                        ft.dropdown.Option("green", "Verde"),
+                        ft.dropdown.Option("orange", "Naranja"),
+                        ft.dropdown.Option("purple", "Morado"),
+                    ],
+                    on_select=lambda e: config.update({"color": e.control.value}),
+                ),
+            ]
+        ),        
+        actions=[
+            ft.TextButton("Guardar", on_click=close_settings)
+        ],
+        open=True,
     )
 
     playlist_view = ft.ListView(
@@ -330,6 +400,7 @@ async def main(page: ft.Page):
                                             controls=[
                                                 ft.Row(
                                                     controls=[
+                                                        config_btn,
                                                         select_folder_btn
                                                     ]
                                                 )
