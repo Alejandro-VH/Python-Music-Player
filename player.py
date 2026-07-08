@@ -14,6 +14,11 @@ async def main(page: ft.Page):
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.theme_mode = ft.ThemeMode.DARK
 
+    page.window.min_width = 880
+    page.window.min_height = 450
+    page.window.width = 900
+    page.window.height = 500
+        
     ## Variables
     playlist = config["songs_directory"]
     current_index = 0
@@ -304,7 +309,7 @@ async def main(page: ft.Page):
                                                 ft.Row(
                                                     controls=[
                                                         ft.Button(
-                                                            content="Elegir carpeta de canciones",
+                                                            content="Carpeta de música",
                                                             icon=ft.Icons.FOLDER_OPEN,
                                                             on_click=get_song_directory,
                                                         ),
