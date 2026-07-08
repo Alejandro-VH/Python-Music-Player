@@ -23,7 +23,7 @@ async def main(page: ft.Page):
     current_index = -1
     total_duration = 0
     is_playing = False
-
+    MAX_AUDIO_GAIN = 0.5
     current_song = None
 
     def load_duration(duration):
@@ -114,7 +114,6 @@ async def main(page: ft.Page):
             page.run_task(button_next_song)
         page.update()
 
-    MAX_AUDIO_GAIN = 0.5
     async def change_song(index):
         nonlocal current_index, is_playing, current_song
 
@@ -178,10 +177,8 @@ async def main(page: ft.Page):
             await change_song(previous_index)
 
     def set_volume(value: float):
-        if current_song is None:
-            return
-
-        current_song.volume = value * MAX_AUDIO_GAIN
+        if current_song is not None:
+            current_song.volume = value * MAX_AUDIO_GAIN
 
         percentage = int(value * 100)
         volume_text.value = f"{percentage}%"
