@@ -1,3 +1,4 @@
+import sys
 import flet as ft
 import flet_audio as fta
 from tinytag import TinyTag
@@ -9,15 +10,26 @@ config = load_config()
 
 async def main(page: ft.Page):
     ## UI Config
-    page.title = "Music Player"
+    page.title = "VibeTracks"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
-    page.theme_mode = ft.ThemeMode.DARK
 
+    # Stuff to set the app icon
+    if getattr(sys, 'frozen', False):
+        actual_route = sys._MEIPASS
+    else:
+        actual_route = os.path.dirname(os.path.abspath(__file__))
+    
+    icon_route = os.path.join(actual_route, "Assets", "icono.ico")
+    page.window.icon = icon_route 
+
+    # Windows settings
     page.window.min_width = 880
     page.window.min_height = 450
     page.window.width = 900
     page.window.height = 500
-        
+    page.window.update()
+    await page.window.center()
+
     ## Variables
     playlist = config["songs_directory"]
     current_index = -1
@@ -26,12 +38,12 @@ async def main(page: ft.Page):
     MAX_AUDIO_GAIN = config.get("max_gain", 0.7)
     current_song = None
 
+    # Methods
     def load_duration(duration):
         nonlocal total_duration
         total_duration = (duration.minutes * 60) + duration.seconds
         total_time_text.value = f"{duration.minutes}:{duration.seconds:02d}"
 
-    ## Auxiliar methods
     async def get_song_directory():
         path = await ft.FilePicker().get_directory_path()
         if path:
@@ -429,4 +441,3 @@ async def main(page: ft.Page):
     page.update()
 
 ft.run(main)
-
