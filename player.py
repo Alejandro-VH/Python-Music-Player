@@ -312,7 +312,7 @@ async def main(page: ft.Page):
         on_click=lambda e: page.show_dialog(config_dialog),
     )
 
-    gain_dialog_text = ft.Text(f"{int(config.get('max_gain', 0.7) * 100)}%", size=12, weight=ft.FontWeight.BOLD, color="blue")
+    gain_dialog_text = ft.Text(f"{int(config.get('max_gain', 0.7) * 100)}%", size=12, weight=ft.FontWeight.BOLD, color=config.get("color", "blue"))
     config_dialog = ft.AlertDialog(
         title=ft.Text("Ajustes", size=16, weight=ft.FontWeight.BOLD),
         content=ft.Column(
@@ -324,6 +324,7 @@ async def main(page: ft.Page):
                 ft.Slider(
                     min=0.1, 
                     max=1.0, 
+                    active_color=config.get("color", "blue"),
                     value=config.get("max_gain", 0.5),
                     on_change=lambda e: update_gain(float(e.control.value)),
                 ),
@@ -344,7 +345,7 @@ async def main(page: ft.Page):
             ]
         ),        
         actions=[
-            ft.TextButton("Guardar", on_click=close_settings)
+            ft.TextButton("Guardar", on_click=close_settings, style=ft.ButtonStyle(color=config.get("color", "blue"))),
         ],
         open=True,
     )
